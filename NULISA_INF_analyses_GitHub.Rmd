@@ -1,0 +1,397 @@
+---
+title: "NULISA INF bioax analysis - Jingyuan, adapted by LML"
+output: 
+  html_notebook: default
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code.
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*.
+
+```{r}
+plot(cars)
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
+DIFFERENTIAL EXPRESSION & VOLCANO PLOTS
+```{r}
+#Load workspace, which has excel sheets: NULISA_CNS, NULISA_INF, MRI_data, MRI_data_tbi, BIOAX_alamar_OLINK_master, Alamar_inf_tbi
+
+# Load necessary libraries
+library(readxl)  # To read Excel files
+library(limma)   # For differential expression analysis
+library(ggplot2) # For plotting
+library(ggrepel) # For better label placement
+
+# 1. Read/clean the data
+#    Make sure your data has columns in this order:
+#    1) Sample ID, 2) Group, 3) Age, 4) Sex, 5) SampleDay, 6) AIS, 7...) Protein expression
+data_inf <- na.omit(NULISA_INF)
+
+# 2. Ensure columns are appropriate factors/numeric
+
+# 3. Prepare expression matrix
+#    Remove columns with covariates to retain only proteins
+expression_data <- NULISA_INF[, -c(1:6)]  # Adjust column range to exclude all covariates
+# Ensure all expression values are numeric
+expression_data <- as.data.frame(lapply(expression_data, function(x) as.numeric(as.character(x))))
+#save datasheet as xlsx, remove protein names and transpose (proteins are rows, participants are columns)
+#
+#re-import as NULISA_inf_DE_matrix - only need to do this once, even if add more columns to NULISA_INF
+# add row names & col names
+
+#START HERE
+expression_data <- NULISA_inf_DE_matrix
+
+colnames(expression_data) <- samples #vector of unique sample id e.g. 500000_TBI (add in column names as samples)
+    #if preparing for sampleday DE
+expression_data <- expression_data[, !grepl("CON", colnames(expression_data))]
+
+
+rownames(expression_data) <- alamar_inf_proteins #vector of protein names (add in row names as proteins)
+
+data_inf <- NULISA_INF #substitute with name of the main dataframe (with covariates, IDs etc.)
+  data_inf_sampleday <- data_inf[data_inf$GROUP != "CON", ] #if doing the lm with sampleday covariate
+  data_inf_sampleday$GROUP <- as.character(data_inf_sampleday$GROUP)
+  data_inf_sampleday$GROUP <- as.factor(data_inf_sampleday$GROUP) #these two to omit the CON from GORUP factor from the memory
+
+
+# The core DE model - with AGE and SEX as covariates only
+print("Attempting to create a simplified design matrix without SampleDay and AIS")
+design_simple <- model.matrix(~ 0 + GROUP + AGE + SEX, data = data_inf)
+  
+  design_sampleday <- model.matrix(~ 0 + GROUP + AGE + SEX + SampleDay, data = data_inf_sampleday)
+ 
+  
+  
+# Rename the columns for clarity
+colnames(design_simple)[1:3] <- c("CON", "NTT", "TBI")
+
+  colnames(design_sampleday)[1:2] <- c("NTT", "TBI")
+  
+print("design matrix dimensions:")
+print(dim(design_simple))
+
+# Check if any samples remain after removing NAs
+complete_samples <- complete.cases(data_inf[, c("GROUP", "AGE", "SEX")])
+print(paste("Number of complete samples (GROUP, AGE, SEX):", sum(complete_samples)))
+
+#5. Proceed with DE analysis
+design <- design_simple #substitute with the design you're using (options: design_sampleday/ design_simple)
+fit <- lmFit(expression_data, design)
+
+# 6. Set up contrasts to compare groups: TBI vs CON, TBI vs NTT, NTT vs CON
+contrast_matrix <- makeContrasts(
+  TBI_vs_CON = TBI - CON,
+  TBI_vs_NTT = TBI - NTT,
+  NTT_vs_CON = NTT - CON,
+  levels = design
+) #for core DE analysis
+
+  contrast_matrix <- makeContrasts(
+  TBI_vs_NTT = TBI - NTT,
+  levels = design
+  ) #for DE analysis with additional sampleday covariate
+
+# 7. Fit contrasts and compute Bayesian statistics
+pre_fit <- contrasts.fit(fit, contrast_matrix)
+fit2 <- eBayes(pre_fit, robust = TRUE) #key results object, robust flag recommended by Gordon Smyth for proteomics (https://www.biostars.org/p/496806/)
+
+# 8. Extract results (all proteins) for each comparison, using FDR correction
+results_coef <- topTable(fit2, coef = 1, number = Inf, adjust.method = "fdr") #across all groups
+results_groupdiff <- topTable(fit2, number = Inf, adjust.method = "fdr")
+results_groupdiff_names <- data.frame(RowNames = row.names(results_groupdiff))
+  #these two gives you the coefficient of whether there is a group effect
+
+results_TBI_vs_CON <- topTable(fit2, coef = "TBI_vs_CON", number = Inf, adjust.method = "fdr")
+row_names_results_TBI_vs_CON <- data.frame(RowNames = row.names(results_TBI_vs_CON))
+results_TBI_vs_NTT <- topTable(fit2, coef = "TBI_vs_NTT", number = Inf, adjust.method = "fdr")
+row_names_results_TBI_vs_NTT <- data.frame(RowNames = row.names(results_TBI_vs_NTT))
+results_NTT_vs_CON <- topTable(fit2, coef = "NTT_vs_CON", number = Inf, adjust.method = "fdr")
+row_names_results_NTT_vs_CON <- data.frame(RowNames = row.names(results_NTT_vs_CON))
+  #these given the post-hoc pairwise contrasts (Volcano & Venn are based on these - more stringent than above)
+
+# 9. Make Volcano plot function
+plot_volcano <- function(results, title, higher_group_left, higher_group_right) {
+
+  # Flag significance
+  results$Significant <- ifelse(results$adj.P.Val < 0.05 & abs(results$logFC) > 1, "Yes", "No")
+
+  ggplot(results, aes(x = logFC, y = -log10(adj.P.Val), color = Significant)) +
+    geom_point(alpha = 0.6, size = 2) +
+    geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "blue", size = 0.5) +
+    #geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "blue", size = 0.5) +
+    scale_color_manual(values = c("No" = "grey", "Yes" = "red")) +
+    theme_minimal() +
+    labs(title = title, x = "Log2 Fold Change", y = "-Log10 Adjusted P-value") +
+    theme(legend.position = "top") +
+    geom_text_repel(
+      data = subset(results, Significant == "Yes"),
+      # Here we remove "_inf" from row names:
+      aes(label = gsub("_inf", "", rownames(subset(results, Significant == "Yes")))),
+      size = 10,
+      max.overlaps = 25,
+      box.padding = 0.75,
+      point.padding = 0.3,
+      max.time = 5
+    ) 
+}  
+  
+
+# 10. Create and print volcano plots (1st argument is the results input)
+  #to plot without GFAP:
+    results_TBI_vs_NTT_noGFAP <- results_TBI_vs_NTT[-1, ]
+
+volcano_TBI_vs_CON <- plot_volcano(results_TBI_vs_CON_noGFAP, "Volcano Plot: TBI vs CON", "CON", "TBI")
+volcano_TBI_vs_NTT <- plot_volcano(results_TBI_vs_NTT_noGFAP, "Volcano Plot: TBI vs NTT", "NTT", "TBI")
+volcano_NTT_vs_CON <- plot_volcano(results_NTT_vs_CON_noGFAP, "Volcano Plot: NTT vs CON", "CON", "NTT")
+
+print(volcano_TBI_vs_CON)
+print(volcano_TBI_vs_NTT)
+print(volcano_NTT_vs_CON)
+
+
+
+
+```
+
+
+BOXPLOTS OF TBI-SPECIFIC PROTEINS
+```{r}
+
+# List of TBI-specific proteins
+tbi_specific_proteins <- c(
+  "GFAP_inf", "IL6_inf", "LIF_inf", "PTX3_inf", "IL33_inf", "IL1RL1_inf",
+  "CHI3L1_inf", "IL1RN_inf", "VSNL1_inf", "CALCA_inf", "TIMP1_inf", "IKBKG_inf"
+)
+
+
+# Filter the dataframe to keep only the TBI-specific proteins and the Group column
+TBI_specific_forplots <- subset(NULISA_INF, select = c("GROUP", tbi_specific_proteins))
+
+# Loop through each protein and plot its levels across the different groups (TBI, NTT, CON)
+for (protein in tbi_specific_proteins) {
+    # Remove "_inf" suffix from protein name for the title
+    protein_name_clean <- gsub("_inf$", "", protein)
+    
+    # Create the plot using ggplot2 with black jittered datapoints
+    p <- ggplot(data = TBI_specific_forplots, aes_string(x = 'GROUP', y = protein, fill = 'GROUP')) +
+        geom_boxplot(outlier.shape = NA, alpha = 0.6) +  # Hide outliers, keep box
+        geom_jitter(color = "black", width = 0.2, size = 1.5, alpha = 0.8) +  # Black points
+        scale_fill_manual(values = c("CON" = "seagreen", "NTT" = "darkblue", "TBI" = "darkred")) +
+        ggtitle(protein_name_clean) +
+        xlab('Group') +
+        ylab('Protein Level') +
+        theme_minimal() +
+        theme(
+            legend.position = "right",
+            plot.title = element_text(face = "bold", hjust = 0.5)
+        ) +
+        guides(fill = guide_legend(title = "Group"))
+    
+    # Print the plot
+    print(p)
+}
+
+```
+
+
+CORRELATIONS BETWEEN TBI-SPECIFIC PROTEINS
+```{r}
+library(corrplot)
+
+#make dataframe
+TBI_specific_cor_input <- subset(NULISA_INF, GROUP == "TBI")
+TBI_specific_cor_input <-subset(TBI_specific_cor_input[,c("GFAP_inf", "IL6_inf",    "LIF_inf", "PTX3_inf",   "IL33_inf",   "IL1RL1_inf", "CHI3L1_inf", "IL1RN_inf" , "VSNL1_inf",  "CALCA_inf", "TIMP1_inf",  "IKBKG_inf" )])
+colnames(TBI_specific_cor_input) <- gsub("_inf$", "", colnames(TBI_specific_cor_input))
+
+#do the correlation
+data <- TBI_specific_cor_input
+TBI_specific_cormat <- rcorr(as.matrix(data),type="spearman")
+
+#correct p values for multiple comparisons
+p_values_matrix <- TBI_specific_cormat$P
+vector_p_values <- as.vector(p_values_matrix)
+corrected_p_values <- p.adjust(p_values_matrix, method = "fdr")
+corrected_p_values_matrix <- matrix(corrected_p_values, nrow = nrow(p_values_matrix), ncol = ncol(p_values_matrix))
+
+#matrix with corrected p values
+correctedp_TBI_specific_cormat <- TBI_specific_cormat
+correctedp_TBI_specific_cormat$P <- corrected_p_values_matrix
+cormat <- correctedp_TBI_specific_cormat$r
+pvalues <- correctedp_TBI_specific_cormat$P
+filtered_cormat <- cormat * (pvalues < 0.05)
+
+#original plot
+plot <- corrplot(TBI_specific_cormat$r,type="upper",order="original",tl.cex=0.4)
+
+#plot with corrected p values
+rownames(corrected_p_values_matrix) <- rownames(filtered_cormat)
+colnames(corrected_p_values_matrix) <- colnames(filtered_cormat)
+
+plotpadj <- corrplot(
+  filtered_cormat,
+  type = "upper",
+  order = "original",
+  tl.cex = 0.8,            # Text size for variable labels
+  addCoef.col = "darkorange",   # Show correlation coefficients
+  number.cex = 0.6,        # Smaller coefficient text
+  p.mat = corrected_p_values_matrix,   # Matrix of adjusted p-values
+  sig.level = 0.05,        # Significance threshold
+  insig = "blank"          # Hide non-significant correlations
+)
+
+```
+MRI analysis
+```{r}
+library(car)
+library(ggplot2)
+
+#testing normality & equal variance of data
+shapiro.test(MRI_INF_data$meanCCFA_v1[MRI_INF_data$GROUP == "CON"])
+shapiro.test(MRI_INF_data$meanCCFA_v1[MRI_INF_data$GROUP == "TBI"]) #fail
+leveneTest(meanCCFA_v1 ~ GROUP, data = MRI_INF_data) #fail
+
+shapiro.test(MRI_INF_data$Zscore_mean_skeletonFA_v1[MRI_INF_data$GROUP == "CON"])
+shapiro.test(MRI_INF_data$Zscore_mean_skeletonFA_v1[MRI_INF_data$GROUP == "TBI"]) #fail
+leveneTest(Zscore_mean_skeletonFA_v1 ~ GROUP, data = MRI_INF_data) #fail
+
+#plot Lesion volume (TBI only)
+ggplot(subset(MRI_INF_data, GROUP == "TBI"), aes(x = GROUP, y = LesionVol)) +
+  geom_boxplot(fill = "darkred") +
+  geom_jitter(width = 0.2, color = "black", alpha = 0.7, size = 2) +
+  labs(title = "Log of LesionVol for TBI group", y = "Log(Lesion Volume)", x = "") +
+  theme_minimal()
+
+#plot DTI values (CON and TBI only)
+  #meanCCFA_v1
+ggplot(subset(MRI_INF_data, GROUP %in% c("TBI", "CON")), aes(x = GROUP, y = meanCCFA_v1, fill = GROUP)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("CON" = "seagreen", "TBI" = "darkred")) +
+  geom_jitter(width = 0.2, color = "black", alpha = 0.7, size = 2) +
+  labs(title = "mean_CCFAv1 by Group", y = "mean_CCFAv1", x = "Group") +
+  theme_minimal()
+
+wilcox.test(meanCCFA_v1 ~ GROUP, data = subset(MRI_INF_data, GROUP %in% c("TBI", "CON")))
+
+  #Zscore_mean_skeletonFA_v1
+ggplot(subset(MRI_INF_data, GROUP %in% c("TBI", "CON")), aes(x = GROUP, y = Zscore_mean_skeletonFA_v1, fill = GROUP)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("CON" = "seagreen", "TBI" = "darkred")) +
+  geom_jitter(width = 0.2, color = "black", alpha = 0.7, size = 2) +
+  labs(title = "Zscore_mean_skeletonFA_v1 by Group", y = "Zscore_mean_skeletonFA_v1", x = "Group") +
+  theme_minimal()
+
+wilcox.test(Zscore_mean_skeletonFA_v1 ~ GROUP, data = subset(MRI_INF_data, GROUP %in% c("TBI", "CON")))
+
+
+#plot MRI and TBI-specific protein correlations
+TBI_specific_MRI_cor_input_lesion <- subset(MRI_INF_data, GROUP == "TBI")
+TBI_specific_MRI_cor_input_lesion <- subset(TBI_specific_MRI_cor_input_lesion[,c("LesionVol", "GFAP_inf", "IL6_inf",    "LIF_inf", "PTX3_inf",   "IL33_inf",   "IL1RL1_inf", "CHI3L1_inf", "IL1RN_inf" , "VSNL1_inf",  "CALCA_inf", "TIMP1_inf",  "IKBKG_inf")])
+TBI_specific_MRI_cor_input_lesion <- na.omit(TBI_specific_MRI_cor_input_lesion)
+
+TBI_specific_MRI_cor_input_DTI <- subset(MRI_INF_data, GROUP == "TBI")
+TBI_specific_MRI_cor_input_DTI <- subset(TBI_specific_MRI_cor_input_DTI[,c("Zscore_mean_skeletonFA_v1","meanCCFA_v1", "GFAP_inf", "IL6_inf",    "LIF_inf", "PTX3_inf",   "IL33_inf",   "IL1RL1_inf", "CHI3L1_inf", "IL1RN_inf" , "VSNL1_inf",  "CALCA_inf", "TIMP1_inf",  "IKBKG_inf")])
+TBI_specific_MRI_cor_input_DTI <- na.omit(TBI_specific_MRI_cor_input_DTI)
+
+#do the correlation
+data <- TBI_specific_MRI_cor_input_DTI #adjust based on which MRI measure we're doing
+INF_MRI_lesion_cormat <- rcorr(as.matrix(data),type="spearman")
+INF_MRI_DTI_cormat <- rcorr(as.matrix(data),type="spearman")
+#NB: this does correlation of everything against everything
+
+#correct p values for multiple comparisons
+p_values_matrix <- INF_MRI_DTI_cormat$P
+vector_p_values <- as.vector(p_values_matrix)
+p_values_matrix[1:2,1:2] <- NA #remove all the non-relevant correlation p-values so adjustment is only with the relevant ones (1 for lesion, 1:2 for DTI measures; next line will also change accordingly)
+p_values_matrix[3:nrow(p_values_matrix),3:ncol(p_values_matrix)] <- NA #remove all the non-relevant correlation p-values so adjustment is only with the relevant ones
+corrected_p_values <- p.adjust(p_values_matrix, method = "fdr")
+corrected_p_values_matrix <- matrix(corrected_p_values, nrow = nrow(p_values_matrix), ncol = ncol(p_values_matrix))
+
+#matrix with corrected p values
+correctedp_correlation_matrix <- INF_MRI_DTI_cormat
+correctedp_correlation_matrix$P <- corrected_p_values_matrix
+correlation_r <- correctedp_correlation_matrix$r
+pvalues <- correctedp_correlation_matrix$P
+filtered_correlation_r <- correlation_r * (pvalues < 0.05)
+
+# Exclude correlations with blood markers and imaging measures
+# Assuming first two columns are imaging markers and the rest are blood tests
+correlation_r <- INF_MRI_DTI_cormat$r
+correlation_r[1:2,1:2] <- NA
+correlation_r[3:nrow(correlation_r),3:ncol(correlation_r)] <- NA
+corrplot(correlation_r, method="circle",order="original",type="upper",tl.cex=0.7)
+
+# correlations with adjusted p (fdr) <0.05 shown only
+filtered_correlation_r[1:2,1:2] <- NA
+filtered_correlation_r[3:nrow(filtered_correlation_r),3:ncol(filtered_correlation_r)] <- NA
+# Plot the correlation matrix
+corrplot(filtered_correlation_r, method="circle",order="original",type="upper",tl.cex=0.7)
+
+```
+
+
+GOS-E Analysis
+```{r}
+
+wilcox.test(IL1RL1_inf ~ GOSE6mCAT, data = NULISA_INF_GOSE)
+
+  #do linear model (only 3 covariates as n=33)
+model <- glm(GOSE6mCAT ~ IL1RL1_inf + AGE + GCSpreH, 
+             data = NULISA_INF_GOSE, 
+             family = binomial)
+summary(model)
+
+#violin plot
+library(ggplot2)
+
+NULISA_INF_GOSE$GOSE6mCAT <- factor(NULISA_INF_GOSE$GOSE6mCAT, levels = c("POOR", "GOOD"))
+
+plot <- ggplot(NULISA_INF_GOSE, aes(x = GOSE6mCAT, y = GFAP_inf, fill = GOSE6mCAT)) +
+  geom_violin(trim = FALSE, alpha = 0.4, color = NA) +             # Violin
+  geom_boxplot(width = 0.15, outlier.shape = NA, alpha = 0.7) +    # Boxplot inside violin
+  geom_jitter(width = 0.15, size = 1.5, alpha = 0.6, color = "black") +  # Points
+  scale_fill_manual(values = c("POOR" = "tomato", "GOOD" = "steelblue")) +
+  labs(
+    title = "GFAP (Inflammatory) by GOSE 6-month Category",
+    x = "GOSE 6m Category",
+    y = "GFAP (INF)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+#do correlation between GFAP_inf and GFAP_peak
+library(dplyr)
+library(tidyr)
+
+bioax_GFAP <- bioax_TBImarkers %>%
+  mutate(log2GFAP_peak = log2(GFAP_peak)) %>%
+  select(ParticipantID, GROUP, GFAP_peak, log2GFAP_peak)
+
+bioax_GFAP <- bioax_GFAP %>%
+  filter(grepl("TBI", GROUP))
+
+bioax_GFAP <- bioax_GFAP %>%
+  left_join(
+    BIOAX_alamar_OLINK_master %>% select(BIOAX_ID, GFAP_inf, PatientID, GOSE6mCAT),
+    by = c("ParticipantID" = "PatientID")
+  )
+
+bioax_GFAP <- bioax_GFAP %>%
+  filter(!is.na(BIOAX_ID))
+
+library(Hmisc)
+
+rcorr(bioax_GFAP$GFAP_inf, bioax_GFAP$log2GFAP_peak, type="pearson")
+  #well correlated, so this doesn't really explain why GFAP_inf not well related to GOSE-6m
+
+```
+

@@ -1,0 +1,701 @@
+---
+title: "VEGFA analyses"
+author: "LuciaMLi"
+date: "2025-07-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+CREACTIVE ANALYSES
+```{r}
+original_OLINK_long$TIMEPOINT <- as.factor(original_OLINK_long$TIMEPOINT)
+
+##CHANGE OVER TIME
+data <- original_OLINK_long
+plot <- ggplot(data, aes(x = TIMEPOINT , y = VEGFA)) + 
+  geom_boxplot(fill = "lightblue", color = "blue", width = 0.7, outlier.shape=NA) + 
+  geom_jitter(shape = 16, color = "darkred", alpha = 0.7, width = 0.2) +
+  scale_y_log10() + 
+  labs(title = "VEGFA", x = "TIMEPOINT", y = "VEGFA") + 
+  theme_minimal() + 
+  theme(axis.text = element_text(size = 14), axis.title = element_text(size = 16))
+
+print(plot)
+
+t.test(data$VEGFA ~ data$TIMEPOINT) #unpaired ttest
+model <- lm(VEGFA ~ TIMEPOINT + AGE + SEX + ECI, data=data) #linear model
+
+## Effect of SEX on VEGF-A, log2 NFL/GFAP/Tau/UCHL1
+data <- original_OLINK_long
+data <- subset(data, TIMEPOINT == "D5")
+
+shapiro.test(data$log2UCLH1)
+wilcox.test(log2UCLH1 ~ SEX, data = data)
+
+
+## TRAJECTORY COMPARISONS & PLOTTING ####
+# Plot individual trajectories
+data <- tidyr::pivot_longer(creactiveVEGFAtrajectory, cols = c(D0VEGFA, D5VEGFA), names_to = "Timepoint", values_to = "VEGFA")
+data <- subset(data,Trajectory=="DOWN")
+p <- ggplot(data, aes(x = Timepoint, y = VEGFA, group = idPatient, color = as.factor(idPatient))) +
+  geom_line(show.legend = FALSE) +  # Connect points with lines
+  geom_point(show.legend = FALSE) +  # Add points at each data point
+  labs(title = "Individual Trajectories of VEGFA",
+       x = "Timepoint",
+       y = "VEGFA") +
+  scale_color_discrete(name = "Person ID") +  # Color by Person ID
+  theme_minimal()+
+  ylim(9, 14) +
+  theme(
+    axis.text.x = element_text(size = 16, color = "black", angle = 0),
+    axis.text.y = element_text(size = 16, color = "black"),
+    axis.title = element_text(size = 14, face = "bold"),
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5)
+  )
+
+print(p)
+
+  #test proportions
+data <- OLINKclinicalwideD0
+cont_table <- table(data$VEGFA_Trajectory, data$SEX)
+chisq.test(cont_table)
+
+
+##GCS_preH DEFINED SEVERITY
+
+subset_data <- subset(original_OLINK_long,TIMEPOINT=="D0")
+
+plot <- ggplot(subset_data, aes(x = gcs_preH_cat , y = VEGFA)) + 
+  geom_boxplot(fill = "lightblue", color = "blue", width = 0.7, outlier.shape=NA) + 
+  geom_jitter(shape = 16, color = "darkred", alpha = 0.7, width = 0.2) +
+  scale_y_log10() + 
+  labs(title = "VEGFA", x = "GCS_preH", y = "NPX") + 
+  theme_minimal() + 
+  coord_cartesian(ylim = c(9, 15)) +
+  theme(axis.text = element_text(size = 14), axis.title = element_text(size = 16))
+
+print(plot)
+
+subset_data <- original_OLINK_long[, c("idPatient", "VEGFA", "TIMEPOINT", "gcs_preH_cat", "AGE", "SEX", "ECI")]
+subset_data <- na.omit(subset_data)
+
+lucia <- aov(VEGFA ~ TIMEPOINT*gcs_preH_cat + AGE + ECI + SEX,data=subset_data) #use lm if wnating to get t values
+summary(lucia)
+tukeylucia <- TukeyHSD(lucia) #do this with no AGE/ ECI/ SEX in model to just get direct comparisons
+print(tukeylucia)
+
+
+##IN RELATION TO REFRACTORY rICP PRESENCE OR IC BLOOD PRESENCE
+data <- subset(original_OLINK_long, TIMEPOINT =="D0")
+
+plot <- ggplot(data, aes(x = ICH , y = VEGFA)) + 
+  geom_boxplot(fill = "lightblue", color = "blue", width = 0.7, outlier.shape=NA) + 
+  geom_jitter(shape = 16, color = "darkred", alpha = 0.7, width = 0.2) +
+  labs(title = "VEGFA by ICHrefract", x = "ICH refract", y = "NPX") + 
+  theme_minimal() + 
+  coord_cartesian(ylim = c(8, 14)) +
+  theme(axis.text = element_text(size = 14), axis.title = element_text(size = 16))
+
+print(plot)
+
+#plot together
+data <- original_OLINK_long[, c("idPatient", "VEGFA", "TIMEPOINT", "ICblood", "ICHrefract", "ICH", "AGE", "ECI")]
+data <- na.omit(data)
+
+plot <- ggplot(data, aes(x = TIMEPOINT, y = VEGFA, fill = ICH)) +
+  geom_boxplot(outlier.shape = NA) +  # Remove outliers from boxplots
+  geom_jitter(position = position_jitterdodge(dodge.width = 0.8, jitter.width = 0.3), aes(color = ICblood), alpha=0.7, size = 1) +  # Add data points with jitter
+  labs(x = "TIMEPOINT", y = "VEGFA NPX", fill = "ICH Status") +
+  theme_minimal()
+
+print(plot)
+
+#stats
+data <- subset(original_OLINK_long, TIMEPOINT =="D5")
+data <- data[,c("idPatient", "VEGFA", "ICHrefract", "AGE", "SEX", "D0log2GFAP")]
+  # "log2TAU", "log2NFL", "log2UCLH1"
+  # "ICHrefract", "ICH"
+  #ICH = intracranial hypertension (vs. bioax labelling!)
+data <- na.omit(data)
+
+data$ICHrefract <- factor(data$ICHrefract)
+levels(data$ICHrefract)
+
+lucia <- glm(ICHrefract ~ VEGFA + AGE + SEX + D0log2GFAP, data = data, family = binomial)
+  # log2TAU + log2NFL + log2UCLH1
+summary(lucia)
+
+logit <- -0.036862
+exp(logit)
+probability <- exp(logit) / (1 + exp(logit))
+print(probability)
+
+  #using Trajectory
+data <- OLINKclinicalwideD0
+data <- data[,c("idPatient", "VEGFA_Trajectory", "ICH", "AGE", "SEX", "GFAP")]
+
+data$log2GFAP <- log2(data$GFAP)
+data$ICH <- as.factor(data$ICH)
+data$ICHrefract <- as.factor(data$ICHrefract)
+data$VEGFA_Trajectory <- as.factor(data$VEGFA_Trajectory)
+
+levels(data$ICH)
+
+lucia <- glm(ICH ~ VEGFA_Trajectory + AGE + SEX + log2GFAP, data = data, family = binomial)
+  # log2TAU + log2NFL + log2UCLH1
+summary(lucia)
+
+logit <- 0.721295
+exp(logit)
+
+####RELATIONSHIP OF VEGFA TO GOS-E at 6m
+#do separately for D0 and D5 values
+library("MASS")
+library("AER")
+library("glmmTMB")
+
+
+#split by day
+data <- OLINKclinicalwideD5[,c("idPatient","VEGFA","GOSE_4cat","AGE", "SEX", "ECI", "GFAP")] #add appropriate column for whether doing D0 or D5 calculations
+data$D0GFAP <- log2(OLINKclinicalwideD5$GFAP)
+data <- na.omit(data)
+
+response <- factor(data$GOSE_4cat, levels = c("4", "3", "2", "1"))
+
+lucia <- polr(formula = response ~ VEGFA + AGE + SEX + ECI + D0GFAP, data = data, Hess = "TRUE") 
+summary(lucia)
+coeftest(lucia)
+
+
+logit <- 0.0287730
+exp(logit)
+
+
+#post-hoc
+shapiro.test(data$VEGFA) #p<0.05 so not normally distributed --> Kruskall Wallis + Dunn post-hoc
+
+john <- kruskal.test(VEGFA ~ GOSE_4cat, data = data)
+print(john)
+library(dunn.test)
+posthoc <- dunn.test(data$VEGFA, g = data$GOSE_4cat, method = "bonferroni")
+print(posthoc)
+
+#plotting VEGFA based on GOSE categories
+desired_order <- c("1", "2", "3", "4")
+data <- OLINKclinicalwide5day[,c("VEGFA","GOSE_4cat")]
+data <- na.omit(data)
+data$GOSE_4cat <- factor(data$GOSE_4cat, levels = desired_order)
+
+plot <- ggplot(data, aes(x = factor(GOSE_4cat), y = VEGFA, fill = factor(GOSE_4cat))) +
+  geom_boxplot(position = position_dodge(width = 0.75), width = 0.5, outlier.shape = NA) +
+  geom_jitter(color = "black", size = 0.5, width = 0.2, alpha = 0.5, shape = 21, fill = "gray30") +  # Add individual data points with jitter
+  labs(title = "Boxplots of peak VEGFA by GOSE",
+       x = "GOSE6m 4cat",
+       y = "VEGFA",
+       fill = "GOSE6m 4cat") +
+  ylim (8, 14) +
+  scale_fill_manual(values = c("1" = "red3", "2" = "orange", "3" = "yellow", "4" = "seagreen")) +  # Specify colors
+  theme_minimal()
+
+print(plot)
+
+# results given in log odds, so exp(value) gives you the odds
+probability <- odds / (1 + odds)
+```
+
+
+
+
+
+
+
+
+BIOAX ANALYSES
+```{r}
+### MEAN SAMPLE DAYS ###
+lucia <- subset(bioax_VEGFA, GROUP == "TBI")
+
+
+#Plotting all the data split into group & timepoint
+#data <- bioax_VEGFA_noNA #replace with whatever file you want to plot, long format
+#data <- subset(creactive_VEGFA, GroupTimepoint %in% c("TBI_A1", "TBI_A2")) #do this to omit plotting anything not one of these categories
+data <- subset(bioax_VEGFA_noNA, GroupTimepoint %in% c("CON_BA", "NTT_A1", "NTT_A2", "TBI_A1", "TBI_A2", "TBI_10d6w", "TBI_6m", "TBI_12m")) #do this to omit plotting anything not one of these categories
+
+# Specify the order of groups
+group_order <- c("CON_BA", "NTT_A1", "NTT_A2", "TBI_A1", "TBI_A2", "TBI_10d6w", "TBI_6m", "TBI_12m")
+#NB: do not plot NTT_10d6w as <10 points!
+
+# Convert 'GROUP' to a factor with specified levels
+data$GroupTimepoint <- factor(data$GroupTimepoint, levels = group_order)
+
+# Create the boxplot with individual values as dots
+plot <- ggplot(data, aes(x = GroupTimepoint, y = NPX)) +
+  geom_boxplot(fill = "lightblue", color = "blue", width = 0.7, outlier.shape=NA) +
+  geom_jitter(aes(color = GroupTimepoint), shape = 16, alpha = 0.7, width = 0.2) +
+  labs(title = "VEGFA",
+       x = "GROUP",
+       y = "NPX") +
+  theme_minimal() +
+  ylim(5, 15) +
+  scale_color_manual(values = c("CON_BA" = "darkgreen", "NTT_A1" = "darkblue", "NTT_A2" = "darkblue", "TBI_A1"="darkred","TBI_A2"="darkred", "TBI_10d6w"="darkred","TBI_6m"="darkred","TBI_12m"="darkred"))
+
+# Print the plot
+print(plot)
+
+
+####PLOT a more detailed timeline (with days specified) ######
+subset_data <- subset(bioax_VEGFA_noNA, InjuryDay >= 10 & InjuryDay < 365) #only use bioax as creactive data all D0-1 or D5-6
+plot(subset_data$InjuryDay, subset_data$NPX)
+
+plot <- ggplot(subset_data, aes(x = InjuryDay, y = NPX)) +
+  geom_point() +
+  #geom_smooth(method = "loess", se = TRUE) + # Add LOESS curve fit with confidence interval
+  geom_line(aes(color = ParticipantID), alpha = 0.5, show.legend = FALSE) +  # Add lines connecting points from the same ParticipantID
+  labs(title = "VEGFA - LOESS Curve Fit with Confidence Interval",
+       x = "InjuryDay",
+       y = "NPX") +
+  theme_minimal() +
+  ylim (10,15)
+
+print(plot)
+
+#Fit Loess curve to data to get InjuryDay with peak NPX
+subset_data <- subset(bioax_VEGFA_noNA, InjuryDay < 42) # Subset the data where InjuryDay is less than 50
+
+loess_fit <- loess(NPX ~ InjuryDay, data = subset_data) # Fit a LOESS curve to the data
+
+predicted_values <- predict(loess_fit) # Predict NPX values from the LOESS fit
+
+peak_index <- which.max(predicted_values) # Find the index of the maximum predicted NPX value
+
+peak_InjuryDay <- subset_data$InjuryDay[peak_index] # Get the corresponding InjuryDay value at the peak index
+
+print(peak_InjuryDay) # Print the value of InjuryDay at the peak of the curve
+
+#NB: loess across whole cohort does not take into account repeated measures, so try mixed effects model
+
+####MIXED EFFECTS MODEL TO GET WHOLE COHORT PEAK, ACCOUNT FOR REPEATED MEASURES####
+# Load necessary libraries
+library(lme4)
+library(lmerTest)
+
+data <- bioax_VEGFA_noNA %>% select(ParticipantID, SampleID, GROUP, TIMEPOINT, InjuryDay, NPX)
+data <- subset(data, GROUP=="TBI")
+data <- subset(data, InjuryDay < 60) #because max InjuryDay for 10d6w sample is actually D54
+data <- data[data$TIMEPOINT %in% c("A1", "A2", "10d6w"), ]
+
+  #if linear (which it clearly isn't)
+#model <- lmer(NPX ~ InjuryDay + (1 | ParticipantID), data = data)
+#summary(model)
+
+  #fit polynomial curve (quadratic)
+model <- lmer(NPX ~ poly(InjuryDay, 2) + (1 | ParticipantID), data = data, REML=FALSE)
+summary(model)
+
+library(ggplot2)
+
+# Create a new data frame for predictions
+new_data <- data.frame(InjuryDay = seq(min(data$InjuryDay), max(data$InjuryDay), length.out = 100))
+new_data$pred <- predict(model, newdata = new_data, re.form = NA)
+peak_index <- which.max(predicted_values)
+peak_InjuryDay <- new_data$InjuryDay[peak_index]
+
+
+p <- ggplot(data, aes(x = InjuryDay, y = NPX, group = ParticipantID)) +
+  #geom_point() +
+  #geom_line(aes(y = NPX), color = "grey", size = 0.2) + # Lines for each participant
+  geom_line(data = new_data, aes(x = InjuryDay, y = pred), color = "blue", size = 0.7, inherit.aes = FALSE) + # Prediction line
+  geom_vline(xintercept = peak_InjuryDay, color = "red", linetype = "dashed", size = 0.5) + # Vertical line at peak InjuryDay +
+  labs(title = "NPX Levels Over Time", x = "InjuryDay", y = "NPX Level") +
+  theme_minimal()
+
+print(p)
+
+
+
+#check Trajectories
+data <- bioax_VEGFA_midtrough
+
+data_long <- pivot_longer(data,
+                          cols = c(A1, A2, `10d6w`),
+                          names_to = "Timepoint",
+                          values_to = "Value")
+
+str(data_long)
+
+data_long$Timepoint <- factor(data_long$Timepoint, levels = c("A1", "A2", "10d6w"))
+
+labels <- subset(data_long, Timepoint == "A1")
+
+ggplot(data_long, aes(x = Timepoint, y = Value, group = ParticipantID)) +
+    geom_line(alpha = 0.5, color = "steelblue") +
+    geom_point(color = "steelblue", size = 2) +
+    geom_text(data = labels, aes(label = ParticipantID),
+              hjust = -0.1, vjust = 0.5, size = 3) +
+    labs(x = "Timepoint", y = "Value", title = "Individual Trajectories") +
+    theme_minimal()
+
+subset(data, `10d6w` < A2)$ParticipantID #check
+
+#plot individual loess curves
+# Load ggplot2
+library(ggplot2)
+
+#data <- curves_bioax_VEGFA_noNA_peakafterD10
+data <- bioax_VEGFA_rise
+
+data$TIMEPOINT <- NULL
+
+data_long <- pivot_longer(data,
+                          cols = c(A1, A2, `10d6w`),
+                          names_to = "TIMEPOINT",
+                          values_to = "Value")
+
+data_long <- data_long %>%
+  left_join(
+    bioax_VEGFA_noNA %>% select(ParticipantID, TIMEPOINT, InjuryDay),
+    by = c("ParticipantID", "TIMEPOINT")
+  )
+
+#data_long <- subset(data_long, InjuryDay < 60) #because max InjuryDay for 10d6w sample is actually D54
+data_long <- data_long[data_long$TIMEPOINT %in% c("A1", "A2", "10d6w"), ]
+
+data_long <- data_long %>% 
+  select(ParticipantID, TIMEPOINT, Value, InjuryDay)
+
+#data_long <- data_long %>%  #this makes it only complete sets of data (people with all 3 acute/subacute timepoints)
+#group_by(ParticipantID) %>%
+#filter(n() == 3) %>%
+#ungroup()
+
+data_long$InjuryDay[1] <- 1 #only if needed to add Injury values manually
+
+labels <- data_long %>%
+  group_by(ParticipantID) %>%
+  filter(InjuryDay == min(InjuryDay)) %>%
+  ungroup()
+
+# Create a base ggplot object
+p <- ggplot(data_long, aes(x = InjuryDay, y = Value, color = ParticipantID)) +
+  geom_point() +  # Individual data points
+  geom_smooth(aes(group = ParticipantID), method = "loess", se = FALSE, linewidth = 0.6) +  # Smooth curves
+  labs(
+    title = "Smoothed Trajectories of NPX Levels Over Injury Days",
+    x = "Injury Day",
+    y = "NPX",
+    color = "Participant ID"
+  ) +
+  ylim(10, 15) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Print the plot
+print(p)
+
+
+#### DO LINEAR MIXED EFFECTS MODEL TO GET EFFECT OF TIME and GROUP ON VALUES
+# Load required libraries
+library(lme4)  # For linear mixed-effects models
+library(lmerTest)  # For p-values in lmer models
+library(car)  # For ANCOVA
+
+data <- subset(all_VEGFA,Project=="BIOAX")
+data <- data[,c("ParticipantID","NPX","GROUP","TIMEPOINT","AGE", "SEX")]
+data <- na.omit(data)
+data$GROUP <- as.factor(data$GROUP)
+data$TIMEPOINT <- as.factor(data$TIMEPOINT)
+data$SEX <- as.factor(data$SEX)
+
+
+# Linear mixed-effects model - probably more appropriate than ANCOVA
+# Using the 'lme4' package
+# 'ParticipantID' is the identifier for each individual
+# '1|ParticipantID' indicates random intercepts for each subject
+# 'AGE' is included as a covariate
+# 'GROUP * TIMEPOINT' specifies the interaction between Group and Timepoint
+# (1|ParticipantID) specifies random intercepts for each subject to account for repeated measures
+lmer_model <- lmer(NPX ~ GROUP * TIMEPOINT + AGE + SEX + (1|ParticipantID), data = data)
+
+# Get p-values using lmerTest package
+lmer_summary <- summary(lmer_model)
+anova(lmer_model)  # Print ANOVA table with p-values
+# Print summary of linear mixed-effects model
+lmer_summary
+
+# Load required library
+library(emmeans)
+# Compute estimated marginal means (EMMs)
+emmeans_result <- emmeans(lmer_model, ~ GROUP * TIMEPOINT)
+# Conduct pairwise comparisons for Group
+pairwise_result_group <- emmeans(emmeans_result, pairwise ~ GROUP, adjust = "fdr")
+# Conduct pairwise comparisons for Timepoint
+pairwise_result_timepoint <- emmeans(emmeans_result, pairwise ~ TIMEPOINT, adjust = "fdr")
+# Conduct pairwise comparisons for the interaction between Group and Timepoint
+pairwise_result_interaction <- emmeans(emmeans_result, pairwise ~ GROUP:TIMEPOINT, adjust = "fdr")
+
+# Print results
+pairwise_result_interaction
+
+
+####VEGFA LEVELS BY GCS_preH CATEGORY (and ECI)
+  #plot little plots of NPX by GCS category, for each timepoint & study
+subset_data <- subset(bioax_VEGFA,TIMEPOINT=="A2") #change timepoint & study as needed
+subset_data <- subset(original_OLINK_long, TIMEPOINT == "D5")
+
+subset_data$GCS_preHospital_range <- factor(subset_data$GCS_preHospital_range, levels = c("3to8", "9to13", "14to15"))
+subset_data$ECI <- as.factor(subset_data$ECI)
+
+plot <- ggplot(subset_data, aes(x = ECI , y = VEGFA)) + 
+  geom_boxplot(fill = "lightblue", color = "blue", width = 0.7, outlier.shape=NA) + 
+  geom_jitter(shape = 16, color = "darkred", alpha = 0.7, width = 0.2) +
+  scale_y_log10() + 
+  labs(title = "VEGFA", x = "ECI", y = "NPX") + 
+  theme_minimal() + 
+  coord_cartesian(ylim = c(9, 15)) +
+  theme(axis.text = element_text(size = 14), axis.title = element_text(size = 16))
+
+print(plot)
+
+  #statistics
+subset_data <- subset(bioax_VEGFA, GROUP=="TBI") #if using bioax
+subset_data <- subset(subset_data, TIMEPOINT %in% c("A1", "A2", "10d6w"))
+subset_data <- subset_data[, c("ParticipantID", "NPX", "TIMEPOINT", "GCS_preHospital_range", "AGE", "SEX", "presenceofECI")]  #covariates are ECI, SEX, AGE
+subset_data <- na.omit(subset_data)
+
+library(lme4)
+library(lmerTest)
+lucia <- lmer(NPX ~ TIMEPOINT*GCS_preHospital_range + AGE + SEX + presenceofECI + (1 | ParticipantID), data = subset_data)
+summary(lucia) #to get main result
+
+  #to get post-hocs
+lucia <- aov(NPX ~ TIMEPOINT*GCS_preHospital_range, data=subset_data)
+tukeylucia <- TukeyHSD(lucia)
+print(tukeylucia)
+
+
+####USING BINARY LOGISTIC REGRESSION TO INTERROGATE INFLUENCE OF VEGFA ON ICH, rICP_ever, rICP_refract STATUS #####
+  #logistic regression
+data <- subset(bioax_VEGFA, TIMEPOINT =="A1" & GROUP == "TBI") #n=157 for A2/ n=178 for A1
+data <- data[,c("ParticipantID","NPX","rICP_refract","AGE","SEX", "log2GFAP_conc_A1")] 
+  # "log2Tau_conc_A1", "log2NFL_conc_A1", "log2S100B_conc_A1", "log2UCHL1_conc_A1"
+  # "log2Tau_conc_A2", "log2NFL_conc_A2", "log2S100B_conc_A2", "log2UCHL1_conc_A2"
+data <- na.omit(data) #n=138 for A1/n=120 for A2
+
+data$rICP_refract <- factor(data$rICP_refract)
+levels(data$ICP_refract)
+
+lucia <- glm(rICP_refract ~ NPX + AGE + SEX + log2GFAP_conc_A1, data = data, family = binomial)
+  # log2Tau_conc_A1 + log2NFL_conc_A1 + log2S100B_conc_A1 + log2UCHL1_conc_A1
+  # log2Tau_conc_A2 + log2NFL_conc_A2 + log2S100B_conc_A2 + log2UCHL1_conc_A2
+summary(lucia)
+
+logit <- -0.06848
+exp(logit)
+probability <- exp(logit) / (1 + exp(logit))
+print(probability)
+
+  #logistic regression to test whether Trajectory category associated with r-rICP, rICP, ICH
+data <- bioax_VEGFA_trajectoryanalysis[,c("ParticipantID","Trajectory","rICP_refract", "AGE", "SEX", "GFAP_conc_A1")] 
+  #covariates = age, SEX, GFAP_conc_A1
+  #outcomes = rICP_ever, rICP_refract
+
+data <- na.omit(data)
+
+data$rICP_refract <- factor(data$rICP_refract)
+levels(data$rICP_refract)
+
+data$log2GFAP_conc_A1 <- log2(data$GFAP_conc_A1)
+
+lucia <- glm(rICP_refract ~ Trajectory + AGE + SEX + log2GFAP_conc_A1, data = data, family = binomial)
+summary(lucia)
+
+logit <- -0.05824
+exp(logit)
+
+  #plot
+peak_bioax_VEGFA$ICH <- as.factor(peak_bioax_VEGFA$ICH)
+data <- subset(peak_bioax_VEGFA, GROUP=="TBI")
+data <- data[complete.cases(data$ICH), ]
+plot <- ggplot(data, aes(x = ICH, y = A1)) +
+  geom_boxplot(fill = "lightblue", color = "blue", width = 0.5, outlier.shape=NA) +  # Boxplots
+  geom_jitter(color = "darkred", width = 0.2) +  # Jittered points
+  labs(title = "Boxplots of A1 VEGFA by ICH",
+       x = "ICH",
+       y = "A1 VEGFA") +
+  theme_minimal()
+
+print(plot)
+
+
+###### RELATIONSHIP OF PEAK VEGF-A (ACUTE-SUBACUTE) AND LATER MRI measures #####
+#using peak VEGFA
+data <- subset(peak_bioax_values, GROUP=="TBI")
+data <- data[,c("ParticipantID", "peak_VEGFA", "peak_NFL", "peak_Tau", "AGE", "SEX", "CorpusCallosumMean_10d6w")]
+  #others: CorpusCallosumMean_10d6w, Zscore_mean_skeletonFA_10d6w, wm_jd_lesions_masked_6m12m, gm_jd_lesions_masked_10d6w6m, LesionVol_10d6w,  "peak_GFAP", "peak_NFL", "peak_Tau", "peak_UCHL1", "peak_S100B",
+data <- na.omit(data)
+
+  #generic linear model
+data$log2GFAP_conc_A1 <- log2(data$GFAP_conc_A1)
+data$log2peakNFL <- log2(data$peak_NFL)
+data$log2peakTau <- log2(data$peak_Tau)
+data$log2peakUCHL1 <- log2(data$peak_UCHL1)
+data$log2peakS100B <- log2(data$peak_S100B)
+data$log2peakGFAP <- log2(data$peak_GFAP)
+oskar <- lm(CorpusCallosumMean_10d6w ~ peak_VEGFA + log2peakNFL + log2peakTau + AGE + SEX, data=data)  # log2peakNFL + log2peakTau + log2peakGFAP + log2peakUCHL1 + log2peakS100B
+summary(oskar)
+
+#using Trajectory
+data <- subset(bioax_VEGFA_trajectoryanalysis, GROUP=="TBI")
+data <- data[,c("ParticipantID", "Trajectory", "Zscore_mean_skeletonFA_10d6w", "AGE", "SEX", "peak_NFL", "peak_TAU")]
+  #others: CorpusCallosumMean_10d6w, Zscore_mean_skeletonFA_10d6w, wm_jd_lesions_masked_6m12m, gm_jd_lesions_masked_10d6w6m, LesionVol_10d6w,  "peak_GFAP", "peak_NFL", "peak_Tau", "peak_UCHL1", "peak_S100B", "GFAP_conc_A1"
+data <- na.omit(data)
+
+data$Zscore_mean_skeletonFA_10d6w <- as.numeric(data$Zscore_mean_skeletonFA_10d6w)
+
+data$log2GFAP_conc_A1 <- log2(data$GFAP_conc_A1)
+data$log2peakNFL <- log2(data$peak_NFL)
+data$log2peakTAU <- log2(data$peak_TAU)
+data$log2peakUCHL1 <- log2(data$peak_UCHL1)
+data$log2peakS100B <- log2(data$peak_S100B)
+data$log2peakGFAP <- log2(data$peak_GFAP)
+oskar <- lm(Zscore_mean_skeletonFA_10d6w ~ Trajectory + AGE + SEX + log2peakNFL + log2peakTAU, data=data)  # log2peakNFL + log2peakTau + log2peakGFAP + log2peakUCHL1 + log2peakS100B
+summary(oskar)
+
+plot <- ggplot(data, aes(x = Trajectory, y = CorpusCallosumMean_10d6w)) +
+  geom_boxplot(fill = "lightblue", color = "blue", width = 0.5, outlier.shape=NA) +  # Boxplots
+  geom_jitter(color = "darkred", width = 0.2) +  # Jittered points
+  labs(title = "Boxplots of CC FA 10d6w by trajectory",
+       x = "Trajectory",
+       y = "MRI measure") +
+  theme_minimal()
+
+print(plot)
+
+
+  #plot
+data <- data[!(data$LesionVol_12m == 0), ]
+data$logLesionVol_12m <- log(data$LesionVol_12m) #for visualisation only
+
+plot <- ggplot(data, aes(x = peak_VEGFA, y = LesionVol_12m)) +
+  geom_point() +  # Add points
+  geom_smooth(method = "lm", se = TRUE, color = "red") +  # Add line of best fit with confidence intervals
+  labs(x = "peak_VEGFA", y = "MRI measure") +  # Add axis labels
+  theme_minimal() +  # Apply minimal theme
+  xlim(10,15)
+  
+print(plot)
+
+#separate rcorrs and do Bonferroni correction
+rcorr(data$peak_VEGFA, data$LesionVol_12m, type="spearman")
+rcorr(data$peak_VEGFA, data$gm_jd_lesions_masked_10d6w6m, type="spearman")
+
+#linear model to account for age
+VEGFA_gm_jd_10d6w6m <- lm(gm_jd_lesions_masked_10d6w6m ~ peak_VEGFA + peak_NFL + peak_GFAP + peak_Tau + peak_UCHL1 + peak_S100B + AGE, data=data)
+summary(VEGFA_gm_jd_10d6w6m)
+
+VEGFA_wm_jd_6m12m <- lm(wm_jd_lesions_masked_6m12m ~ peak_VEGFA + peak_NFL + peak_GFAP + peak_Tau + peak_UCHL1 + peak_S100B + AGE, data=data)
+summary(VEGFA_wm_jd_6m12m)
+
+
+####RELATIONSHIP OF VEGFA TO GOS-E at 6m and 12m
+#look at peak value of VEGFA out of the 3 acute/subacute timings (on the basis that levels are high until at least 6w)
+library("MASS")
+library("AER")
+library("glmmTMB")
+
+data <- peak_bioax_VEGFA[,c("ParticipantID","peak_VEGFA", "GOSE12m4cat", "AGE", "SEX", "GFAP_conc_A1", "presenceofECI" )] #covariates = , "AGE", "SEX", "GFAP_conc_A1", "presenceofECI"
+#covariates from Graham 2021: 6m = "peak_NFL", "peak_UCLH1", "peak_GFAP", "peak_S100B", "CorpusCallosumMean_10d6w", "
+  
+data$GFAP_conc_A1 <- log2(data$GFAP_conc_A1)
+data <- na.omit(data)
+data$GOSE12m4cat <- as.factor(data$GOSE12m4cat)
+
+response <- factor(data$GOSE12m4cat, levels = c("GOOD", "MOD", "POOR", "DEADVS"))
+
+lucia <- polr(formula = response ~ peak_VEGFA + AGE + SEX + GFAP_conc_A1 + presenceofECI, data = data, Hess = "TRUE") #does not take into account repeated measures (which should be fine if only looking at one datapoint)
+  # covariates: + AGE + SEX + GFAP_conc_A1
+  
+summary(lucia)
+coeftest(lucia)
+
+logit <- 0.3833410
+exp(logit)
+
+  #using Trajectory rather than peak
+data <- bioax_VEGFA_trajectoryanalysis[,c("ParticipantID","Trajectory","GOSE12m4cat", "SEX", "AGE", "GFAP_conc_A1", "presenceofECI")] #covariates = age, SEX, GFAP_conc_A1, presenceofECI
+data <- na.omit(data)
+
+data$GOSE12m4cat <- factor(data$GOSE12m4cat)
+levels(data$GOSE12m4cat)
+
+data$log2GFAP_conc_A1 <- log2(data$GFAP_conc_A1)
+response <- factor(data$GOSE12m4cat, levels = c("GOOD", "MOD", "POOR", "DEADVS"))
+
+lucia <- polr(formula = response ~ Trajectory + AGE + SEX + log2GFAP_conc_A1 + presenceofECI, data = data, Hess = "TRUE")
+summary(lucia)
+library(lmtest)
+coeftest(lucia)
+
+logit <- 0.98672703
+exp(logit)
+
+
+#post-hoc
+data <- peak_bioax_VEGFA[,c("ParticipantID","peak_VEGFA", "GOSE12m4cat")]
+data <- na.omit(data)
+shapiro.test(data$peak_VEGFA) #p<0.05 so not normally distributed --> Kruskall Wallis + Dunn post-hoc
+john <- aov(peak_VEGFA ~ GOSE6m4cat,data=data)
+summary(john)
+tukeyjohn <- TukeyHSD(john)
+print(tukeyjohn)
+
+john <- kruskal.test(peak_VEGFA ~ GOSE12m4cat, data = data)
+print(john)
+library(dunn.test)
+posthoc <- dunn.test(data$peak_VEGFA, g = data$GOSE12m4cat, method = "bonferroni")
+print(posthoc)
+
+#plotting peak VEGFA based on GOSE categories
+desired_order <- c("DEADVS", "POOR", "MOD", "GOOD")
+data$GOSE6m4cat <- factor(data$GOSE6m4cat, levels = desired_order)
+
+
+plot <- ggplot(data, aes(y = `10d6w`, fill = GOSE6m4cat)) +
+  geom_boxplot(aes(x = factor(1)), position = position_dodge(width = 0.75), width = 0.5, outlier.shape = NA) +
+  geom_point(aes(x = factor(1)), position = position_jitterdodge(), width = 0.5, color = "black", size = 1) +  # Add individual data points
+  labs(title = "Boxplots of peak VEGFA by GOSE",
+       y = "peak_VEGFA",
+       fill = "GOSE12m4cat") +
+  scale_fill_manual(values = c("DEADVS" = "red3", "POOR" = "orange", "MOD" = "yellow", "GOOD" = "seagreen")) +  # Specify colors
+  theme_minimal()
+
+print(plot)
+
+# results given in log odds, so exp(value) gives you the odds
+probability <- odds / (1 + odds)
+
+```
+
